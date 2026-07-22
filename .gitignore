@@ -1,0 +1,6 @@
+inference/include/deterministic/SymbolicLogic.hpp
+inference/include/deterministic/TheoremProver.hpp
+inference/src/deterministic/SymbolicLogic.cpp
+inference/src/deterministic/TheoremProver.cpp
+
+
