@@ -72,6 +72,8 @@ meta_rule.id = "META1";
 meta_rule.antecedents = {Predicate{"financial_difficulty", {}}};
 meta_rule.consequents = {Predicate{"SELECT_RULE", {Term{Term::Type::Constant, "R2"}}}};
 meta_rule.priority = 999;   // 元规则优先级必须高于普通规则
+
+resolver.set_meta_rules({meta_rule});
 ```
 
 元规则优势：可解释性强，业务人员可以直接编写和维护。
@@ -111,15 +113,15 @@ classDiagram
         -ConflictResolutionStrategy m_strategy
         -vector~ProductionRule~ m_meta_rules
         -function m_possibility_func
-        -bool m_closed_world
+        -WorldAssumption m_world_assumption
         -mt19937 m_rng
         +ConflictResolver()
         +ConflictResolver(strategy)
         +set_strategy(strategy)
-        +set_custom_strategy(function)
+        +set_override_strategy(function)
         +set_meta_rules(rules)
         +set_possibility_function(func)
-        +set_closed_world_assumption(closed)
+        +set_world_assumption(assumption)
         +resolve(conflict_set, working_memory, fired_history) vector~ProductionRule~
         +strategy_name() string
         +has_meta_rules() bool
@@ -129,12 +131,11 @@ classDiagram
         -resolve_by_meta_rules(conflict_set, working_memory) optional~ProductionRule~
         -resolve_by_possibility(conflict_set, working_memory, fired_history) vector~ProductionRule~
         -extract_selected_rule_id(meta_rule) optional~string~
-        -by_priority(set) vector~ProductionRule~$
-        -by_specificity(set) vector~ProductionRule~$
-        -by_recency(set, fired_history) vector~ProductionRule~
-        -by_match_degree(set) vector~ProductionRule~$
-        -by_random(set) vector~ProductionRule~
-        -hybrid(set, working_memory, fired_history) vector~ProductionRule~
+        -by_priority(rules) vector~ProductionRule~$
+        -by_specificity(rules) vector~ProductionRule~$
+        -by_recency(rules, fired_history) vector~ProductionRule~
+        -by_match_degree(rules) vector~ProductionRule~$
+        -by_random(rules) vector~ProductionRule~
         -count_antecedents(rule) int$
         -compute_match_degree(rule, working_memory) double$
     }
@@ -148,7 +149,12 @@ classDiagram
         MetaRule
         Possibility
         Random
-        Hybrid
+    }
+
+    class WorldAssumption {
+        <<enumeration>>
+        Closed
+        Open
     }
 
     class ProductionRule {
@@ -166,6 +172,7 @@ classDiagram
     }
 
     ConflictResolver --> ConflictResolutionStrategy
+    ConflictResolver --> WorldAssumption
     ConflictResolver --> ProductionRule
     ConflictResolver --> Fact
 ```
@@ -180,15 +187,15 @@ classDiagram
 flowchart TD
     start(["resolve() 被调用"]) --> checkConflictSet{"conflict_set.empty?"}
 
-    checkConflictSet -->|是| closedWorld{"m_closed_world?"}
-    closedWorld -->|true| returnEmpty1["返回空<br/>封闭世界：无动作"]
-    closedWorld -->|false| returnEmpty2["返回空<br/>开放世界：上层需询问"]
+    checkConflictSet -->|是| worldAssumption{"m_world_assumption?"}
+    worldAssumption -->|Closed| returnEmpty1["返回空<br/>封闭世界：无动作"]
+    worldAssumption -->|Open| returnEmpty2["返回空<br/>开放世界：上层需询问"]
 
-    checkConflictSet -->|否| customStrategy{"m_custom_strategy?"}
-    customStrategy -->|是| useCustom["调用自定义策略函数"]
+    checkConflictSet -->|否| overrideStrategy{"m_override_strategy?"}
+    overrideStrategy -->|是| useCustom["调用自定义策略函数"]
     useCustom --> returnCustom["返回自定义结果"]
 
-    customStrategy -->|否| strategySwitch{"根据 m_strategy 分发"}
+    overrideStrategy -->|否| strategySwitch{"根据 m_strategy 分发"}
 
     strategySwitch -->|Priority| byPriority["by_priority"]
     strategySwitch -->|Specificity| bySpecificity["by_specificity"]
@@ -197,7 +204,6 @@ flowchart TD
     strategySwitch -->|Random| byRandom["by_random"]
     strategySwitch -->|MetaRule| byMetaRule["resolve_by_meta_rules"]
     strategySwitch -->|Possibility| byPossibility["resolve_by_possibility"]
-    strategySwitch -->|Hybrid| byHybrid["hybrid 混合策略"]
 
     byPriority --> returnResult["返回选中规则"]
     bySpecificity --> returnResult
@@ -206,7 +212,6 @@ flowchart TD
     byRandom --> returnResult
     byMetaRule --> returnResult
     byPossibility --> returnResult
-    byHybrid --> returnResult
 
     returnResult --> endNode(["结束"])
     returnEmpty1 --> endNode
@@ -214,42 +219,53 @@ flowchart TD
     returnCustom --> endNode
 ```
 
-### 4.2 Hybrid 混合策略详细流程
+### 4.2 MetaRule 策略详细流程
 
 ```mermaid
 flowchart TD
-    start(["hybrid() 开始"]) --> filterPriority["第一层：filter_by_priority<br/>按优先级过滤"]
+    start(["resolve_by_meta_rules() 开始"]) --> hasMeta{"有元规则?"}
 
-    filterPriority --> topRules{"top.size()?"}
+    hasMeta -->|否| returnEmpty["返回 nullopt"]
 
-    topRules -->|"== 0"| returnEmpty["返回空"]
-    topRules -->|"== 1"| returnSingle["返回唯一规则"]
+    hasMeta -->|是| checkMeta["遍历元规则列表"]
 
-    topRules -->|">= 2"| checkConsistent{"conclusions_consistent?<br/>第二层子情况1"}
+    checkMeta --> matchAntecedent{"元规则前提匹配<br/>working_memory?"}
 
-    checkConsistent -->|"是：无冲突"| returnAll["全部返回<br/>后续CF组合叠加"]
+    matchAntecedent -->|否| checkMeta
 
-    checkConsistent -->|"否：有冲突"| tryMeta["第二层子情况2-A<br/>resolve_by_meta_rules"]
+    matchAntecedent -->|是| extract["提取 SELECT_RULE 结论"]
 
-    tryMeta --> metaResult{"有元规则命中?"}
+    extract --> findRule{"在 conflict_set 中<br/>找到对应的规则?"}
 
-    metaResult -->|是| returnMeta["返回元规则选中的规则"]
-
-    metaResult -->|否| tryPossibility["第二层子情况2-B<br/>resolve_by_possibility"]
-
-    tryPossibility --> possibilityResult{"有结果?"}
-
-    possibilityResult -->|是| returnPossibility["返回可能性最高的规则"]
-
-    possibilityResult -->|否| fallback["兜底策略<br/>返回top中的第一条"]
-
-    fallback --> returnFallback["返回兜底规则"]
+    findRule -->|是| returnRule["返回找到的规则"]
+    findRule -->|否| returnEmpty
 
     returnEmpty --> endNode(["结束"])
-    returnSingle --> endNode
-    returnAll --> endNode
-    returnMeta --> endNode
-    returnPossibility --> endNode
+    returnRule --> endNode
+```
+
+### 4.3 Possibility 策略详细流程
+
+```mermaid
+flowchart TD
+    start(["resolve_by_possibility() 开始"]) --> hasFunc{"有可能性函数?"}
+
+    hasFunc -->|否| fallbackPriority["降级：按优先级排序"]
+
+    hasFunc -->|是| scoreEach["遍历所有规则，计算得分"]
+
+    scoreEach --> sortByScore["按得分降序排序"]
+
+    sortByScore --> threshold["保留得分 ≥ 最高分 × 0.9 的规则"]
+
+    threshold --> result{"结果为空?"}
+
+    result -->|是| fallbackPriority2["降级：按优先级排序"]
+    result -->|否| returnRules["返回得分最高的规则列表"]
+
+    fallbackPriority --> returnFallback["返回优先规则"]
+    fallbackPriority2 --> returnFallback
+    returnRules --> endNode(["结束"])
     returnFallback --> endNode
 ```
 
@@ -266,7 +282,7 @@ flowchart TD
 | **第2.2层** | 不一致 | 进入裁决 | 进入第3层 | - |
 | **第3层** | 有元规则 | 策略A：元规则 | `resolve_by_meta_rules()` | 元规则选中的规则 |
 | **第3层** | 有可能性函数 | 策略B：可能性 | `resolve_by_possibility()` | 得分最高的规则 |
-| **第3层** | 两者都无 | 兜底 | `hybrid()` 末尾 | `top[0]` |
+| **第3层** | 两者都无 | 兜底 | `resolve()` 末尾 | `top[0]` |
 
 ---
 
@@ -303,9 +319,6 @@ meta_rule.priority = 999;
 
 // 注册元规则
 resolver.set_meta_rules({meta_rule});
-
-// 当规则 R1（推荐考研）和 R2（推荐就业）冲突时，
-// 如果工作内存中有 financial_difficulty，则会选择 R2
 ```
 
 ### 6.3 使用可能性函数
