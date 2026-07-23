@@ -23,7 +23,6 @@
 
 namespace expert {
 
-
 // 冲突消解的规则（第 0 层）
 enum class WorldAssumption {
     Closed,   // 无动作，推理结束
@@ -44,7 +43,16 @@ enum class ConflictResolutionStrategy {
     Random,        // 随机（测试用）
 };
 
-
+// 消解结果，包含规则列表和状态信息
+struct ResolutionResult {
+    std::vector<ProductionRule> selected_rules;
+    enum class Status {
+        Success,        // 成功选出一条或多条规则
+        NoMatch,        // 没有规则匹配
+        NeedQuery,      // 开放世界下需要询问用户
+        Conflict,       // 冲突无法解决
+    } status = Status::Success;
+};
 
 // ============================================================
 // vector<冲突规则> → ConflictResolver → vector<解决冲突后，保留下来的规则>
@@ -54,19 +62,22 @@ class ConflictResolver {
 public:
     // ---- 构造函数 ----
     ConflictResolver() = default;
-    explicit ConflictResolver(ConflictResolutionStrategy strategy);
+    explicit ConflictResolver(ConflictResolutionStrategy strategy):m_strategy(strategy) {};
 
     
     // ---- 策略选择 ----
     // 选择具体策略
-    void set_strategy(ConflictResolutionStrategy strategy);
+    void set_strategy(ConflictResolutionStrategy strategy){
+        this -> m_strategy = strategy;
+    };
     
     // 支持自定义策略，比如设计组合策略
     void set_override_strategy(
         std::function<std::vector<ProductionRule>(const std::vector<ProductionRule>&)> strategy
-    );
+    ){
+        this -> m_override_strategy = strategy;
+    };
     
-
 
     // Priority, Recency 可以读取 KB、DB 来设计
     // Random 可以利用 <random> 库进行设计
@@ -99,13 +110,18 @@ public:
     // ---- 核心方法 ----
     
     // 从冲突集中选规则
-    std::vector<ProductionRule> resolve(
+    ResolutionResult resolve(
         const std::vector<ProductionRule>& conflict_set,
         const std::unordered_set<Fact>& working_memory,
         const std::unordered_set<RuleId>& fired_history
     );
 
-
+    // 辅助方法：仅获取规则列表（兼容旧代码）
+    std::vector<ProductionRule> resolve_rules(
+        const std::vector<ProductionRule>& conflict_set,
+        const std::unordered_set<Fact>& working_memory,
+        const std::unordered_set<RuleId>& fired_history
+    );
 
     // 用于调试、日志、输出等的辅助工具函数
     std::string strategy_name() const;
@@ -119,7 +135,7 @@ private:
     // ---- 数据成员 ----
     // 默认策略为按优先级排序
     ConflictResolutionStrategy m_strategy = ConflictResolutionStrategy::Priority;
-    std::function<std::vector<ProductionRule>(const std::vector<ProductionRule>&)> m_custom_strategy;
+    std::function<std::vector<ProductionRule>(const std::vector<ProductionRule>&)> m_override_strategy;
     
     // 一系列 metarules
     std::vector<ProductionRule> m_meta_rules;

@@ -4,3 +4,4 @@ inference/src/deterministic/SymbolicLogic.cpp
 inference/src/deterministic/TheoremProver.cpp
 
 
+build/
