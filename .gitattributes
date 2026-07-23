@@ -1,0 +1,9 @@
+# 语言识别
+*.cpp linguist-language=C++
+*.hpp linguist-language=C++
+*.py linguist-language=Python
+*.sql linguist-language=SQL
+
+# 文档不算代码（避免影响统计）
+docs/* linguist-documentation
+*.md linguist-documentation
